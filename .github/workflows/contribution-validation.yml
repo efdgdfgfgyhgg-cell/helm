@@ -1,0 +1,44 @@
+name: Contribution validation
+on:
+  push:
+    branches: ["validation/atomic-write-cleanup"]
+permissions:
+  contents: read
+jobs:
+  fileutil:
+    if: github.repository == 'efdgdfgfgyhgg-cell/helm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: b672f9669e243c2bb3ef8406faadbf55922832d7
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify regression tests fail without cleanup
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('internal/fileutil/fileutil.go')
+          s = p.read_text()
+          cleanup = '\tdefer func() {\n\t\t_ = os.Remove(tempName)\n\t}()\n'
+          assert s.count(cleanup) == 1
+          p.write_text(s.replace(cleanup, ''))
+          PY
+          set +e
+          go test ./internal/fileutil -run 'TestAtomicWriteFile_(ReadError|RenameError)' -count=1 > baseline.log 2>&1
+          result=$?
+          set -e
+          cat baseline.log
+          test "$result" -ne 0
+          grep -q 'failed writes must not leave temporary files' baseline.log
+          grep -q 'failed renames must not leave temporary files' baseline.log
+          git restore internal/fileutil/fileutil.go
+      - name: Test fixed file utilities
+        run: go test -race ./internal/fileutil -count=1 -v
+      - name: Vet fixed file utilities
+        run: go vet ./internal/fileutil
