@@ -32,6 +32,9 @@ func AtomicWriteFile(filename string, reader io.Reader, mode os.FileMode) error 
 		return err
 	}
 	tempName := tempFile.Name()
+	defer func() {
+		_ = os.Remove(tempName)
+	}()
 
 	if _, err := io.Copy(tempFile, reader); err != nil {
 		tempFile.Close() // return value is ignored as we are already on error path

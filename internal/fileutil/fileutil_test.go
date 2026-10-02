@@ -18,6 +18,8 @@ package fileutil
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,4 +112,45 @@ func TestPlatformAtomicWriteFile_OverwritesExisting(t *testing.T) {
 	require.NoError(t, err, "failed reading result")
 
 	require.Equal(t, "second", string(contents))
+}
+
+func TestAtomicWriteFile_ReadError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repositories.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
+	readErr := errors.New("read failed")
+	reader := io.MultiReader(strings.NewReader("partial"), failingReader{readErr})
+
+	require.ErrorIs(t, AtomicWriteFile(path, reader, 0o600), readErr)
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(contents))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "failed writes must not leave temporary files")
+	assert.Equal(t, "repositories.yaml", entries[0].Name())
+}
+
+func TestAtomicWriteFile_RenameError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "destination")
+	require.NoError(t, os.Mkdir(path, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(path, "original"), []byte("original"), 0o600))
+
+	require.Error(t, AtomicWriteFile(path, strings.NewReader("replacement"), 0o600))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "failed renames must not leave temporary files")
+	assert.Equal(t, "destination", entries[0].Name())
+	contents, err := os.ReadFile(filepath.Join(path, "original"))
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(contents))
+}
+
+type failingReader struct {
+	err error
+}
+
+func (r failingReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
